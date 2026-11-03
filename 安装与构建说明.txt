@@ -1,0 +1,26 @@
+这是C#源码项目，目前未编译，不包含现成.rhp二进制。
+
+GitHub构建：
+把本目录中的文件（含.github目录）提交至仓库根目录。
+进入仓库Actions -> Build Rhino RHP，等待绿色成功标记。
+打开该次运行，在Artifacts下载WoodFilletR13-rhp，解压即可获得.rhp。
+若工作流没有自动运行，在Actions中手动Run workflow。
+工作流只构建并上传构建产物，不发布Release。
+
+本地构建：
+安装.NET SDK和.NET Framework 4.8开发环境。
+在本目录运行：dotnet build WoodFilletR13.csproj -c Release
+输出：bin\Release\net48\WoodFilletR13.rhp。
+首次还原需要连接NuGet。项目引用RhinoCommon 7.37系列。
+
+安装：将.rhp拖入Windows版Rhino，输入WoodFilletR13。
+选同一封闭Brep的具体棱边，Enter完成。实际板厚应为4mm。
+成功后生成新实体，原件隐藏，Show可恢复；Undo可撤回。
+如果选不到拉伸对象子边，请先ConvertExtrusion。
+正反面由所选棱边决定，不自动扩展选边；不自动测量板厚。
+
+限制：R1.3三维圆角，不生成二维激光切割轮廓、切缝补偿或避空狗骨。
+普通内凹Fillet可能增加角落材料，不能保证配合更松；应进行加工试配。
+圆角会修剪邻接面及端部。失败时不降低半径、不接受开放实体。
+目标为Windows Rhino7/8；Rhino8的实际运行时兼容性仍需实测。
+当前环境无C#工具链和Rhino，尚未验证编译及实机运行。
