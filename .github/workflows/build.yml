@@ -1,0 +1,31 @@
+name: Build Rhino RHP
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '**.cs'
+      - '**.csproj'
+      - '.github/workflows/build.yml'
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - name: Build Release
+        run: dotnet build WoodFilletR13.csproj -c Release
+      - name: Verify output
+        shell: pwsh
+        run: |
+          if (!(Test-Path 'bin/Release/net48/WoodFilletR13.rhp')) {
+            throw 'RHP was not generated'
+          }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: WoodFilletR13-rhp
+          path: bin/Release/net48/WoodFilletR13.rhp
+          if-no-files-found: error
