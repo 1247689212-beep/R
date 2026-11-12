@@ -56,15 +56,22 @@ namespace WoodFilletR13 {
    if(s<=0 || double.IsNaN(s) || double.IsInfinity(s) || tol<=0 || tol>0.01*s) {
     RhinoApp.WriteLine("请设置标准长度单位，绝对公差不大于0.01mm。"); return Result.Failure;
    }
-   using(var spec=new GetNumber()) {
-    spec.SetCommandPrompt("输入板厚（mm）：2 / 2.5 / 3 / 4");
-    spec.SetDefaultNumber(4);
+   using(var spec=new GetString()) {
+    spec.SetCommandPrompt("选择板厚（mm）：Q=2 / W=2.5 / E=3 / R=4");
+    spec.AddOption("Q");spec.AddOption("W");spec.AddOption("E");spec.AddOption("R");
+    spec.AcceptNothing(true);
     while(true) {
-     if(spec.Get()!=GetResult.Number)return spec.CommandResult();
-     double thickness=spec.Number();
-     if(thickness!=2 && thickness!=2.5 && thickness!=3 && thickness!=4) {
-      RhinoApp.WriteLine("请输入2、2.5、3或4。");continue;
-     }
+     var answer=spec.Get();
+     double thickness=4;
+     if(answer==GetResult.Option)thickness=new double[]{2,2.5,3,4}[spec.OptionIndex()-1];
+     else if(answer==GetResult.String) {
+      string value=spec.StringResult().Trim().ToUpperInvariant();
+      if(value=="Q" || value=="2")thickness=2;
+      else if(value=="W" || value=="2.5")thickness=2.5;
+      else if(value=="E" || value=="3")thickness=3;
+      else if(value=="R" || value=="4")thickness=4;
+      else {RhinoApp.WriteLine("请输入Q/W/E/R或2/2.5/3/4。");continue;}
+     } else if(answer!=GetResult.Nothing)return spec.CommandResult();
      w=thickness*s;notched=thickness==2.5;
      r=(notched?0.5:thickness==2?1.0:1.3)*s;break;
     }
@@ -78,8 +85,14 @@ namespace WoodFilletR13 {
      RhinoApp.WriteLine("请输入1或2。");
     }
    }
+   var highlighted=new System.Collections.Generic.List<RhinoObject>();
+   foreach(var item in doc.Objects.GetObjectList(ObjectType.Curve)) {
+    if(IsPending(item,w,tol)){item.Highlight(true);highlighted.Add(item);}
+   }
+   doc.Views.Redraw();
+   try {
    using(var go=new GetObject()) {
-    go.SetCommandPrompt(string.Format("选择{0}mm宽闭合矩形轮廓",w/s));
+    go.SetCommandPrompt(string.Format("已提亮{0}个未倒角{1}mm矩形，请选择要转换的轮廓",highlighted.Count,w/s));
     go.GeometryFilter=ObjectType.Curve; go.SubObjectSelect=false;
     go.GetMultiple(1,0); if(go.CommandResult()!=Result.Success)return go.CommandResult();
     int done=0;
@@ -99,12 +112,36 @@ namespace WoodFilletR13 {
      for(int j=0;j<4;j++)if(Math.Abs(p.DistanceTo(poly[j]))>tol)valid=false;
      if(!valid || !p.IsValid)continue;
      using(var result=Slot(doc,p,w,h,r,notched)) {
-      if(result!=null && doc.Objects.Replace(obj.Id,result))done++;
+      if(result!=null && doc.Objects.Replace(obj.Id,result)) {
+       done++;doc.Objects.Select(obj.Id,false);
+      }
      }
     }
     doc.Views.Redraw(); RhinoApp.WriteLine("转换完成：{0}；跳过：{1}。支持Undo撤销。",done,go.ObjectCount-done);
     return done>0?Result.Success:Result.Nothing;
    }
+   } finally {
+    foreach(var item in highlighted)item.Highlight(false);
+    // Persist remaining candidates as standard Rhino selection; Esc clears it.
+    foreach(var item in doc.Objects.GetObjectList(ObjectType.Curve)) {
+     if(IsPending(item,w,tol))doc.Objects.Select(item.Id);
+    }
+    doc.Views.Redraw();
+   }
+  }
+  static bool IsPending(RhinoObject obj,double width,double tol) {
+   if(obj==null || obj.IsHidden || obj.IsLocked || obj.IsReference || !obj.IsSelectable())return false;
+   var c=obj.Geometry as Curve;Polyline poly;
+   if(c==null || !c.IsClosed || !c.TryGetPolyline(out poly) || poly.Count!=5)return false;
+   var e=new Vector3d[4];var u=new Vector3d[4];var len=new double[4];
+   for(int i=0;i<4;i++){e[i]=poly[(i+1)%4]-poly[i];len[i]=e[i].Length;u[i]=e[i];if(len[i]<=tol || !u[i].Unitize())return false;}
+   for(int i=0;i<4;i++)if(Math.Abs(u[i]*u[(i+1)%4])>1e-8)return false;
+   if((e[0]+e[2]).Length>tol || (e[1]+e[3]).Length>tol)return false;
+   if(!((Math.Abs(len[0]-width)<=tol && len[1]>=width-tol) || (Math.Abs(len[1]-width)<=tol && len[0]>=width-tol)))return false;
+   var p=new Plane(poly[0],u[0],-u[3]);
+   if(!p.IsValid)return false;
+   for(int i=0;i<4;i++)if(Math.Abs(p.DistanceTo(poly[i]))>tol)return false;
+   return true;
   }
   static Result NewSlot(RhinoDoc doc,double s,double w,double r,bool notched) {
    double mm=10;
