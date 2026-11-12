@@ -1,26 +1,13 @@
-这是C#源码项目，目前未编译，不包含现成.rhp二进制。
+WoodFilletR13 二维卡口插件（woodslot-2d 分支）
 
-GitHub构建：
-把本目录中的文件（含.github目录）提交至仓库根目录。
-进入仓库Actions -> Build Rhino RHP，等待绿色成功标记。
-打开该次运行，在Artifacts下载WoodFilletR13-rhp，解压即可获得.rhp。
-若工作流没有自动运行，在Actions中手动Run workflow。
-工作流只构建并上传构建产物，不发布Release。
+编译目标：Rhino 7/8 Windows，.NET Framework 4.8，引用 RhinoCommon 7.37。
 
-本地构建：
-安装.NET SDK和.NET Framework 4.8开发环境。
-在本目录运行：dotnet build WoodFilletR13.csproj -c Release
-输出：bin\Release\net48\WoodFilletR13.rhp。
-首次还原需要连接NuGet。项目引用RhinoCommon 7.37系列。
+安装：从本分支 GitHub Actions 最新成功构建下载 WoodFilletR13-rhp，解压；在 Rhino 插件管理器中安装 WoodFilletR13.rhp，或将文件拖入 Rhino 窗口。
+运行命令：WoodFilletR13
+New：输入总长度（mm，至少4），选择中心和长度方向。生成宽4mm、四角R1.3mm闭合二维轮廓。
+Convert：选择一个或多个独立闭合矩形折线，短边须为4mm（文档公差内）；转换保留长度和对象属性。非矩形及宽度不符的对象跳过。支持Undo。
+文档须采用标准长度单位，绝对公差不大于0.01mm等效值。尺寸自动换算。
+不处理三维实体棱边，也不识别整张板材外轮廓中的嵌入开口槽。
 
-安装：将.rhp拖入Windows版Rhino，输入WoodFilletR13。
-选同一封闭Brep的具体棱边，Enter完成。实际板厚应为4mm。
-成功后生成新实体，原件隐藏，Show可恢复；Undo可撤回。
-如果选不到拉伸对象子边，请先ConvertExtrusion。
-正反面由所选棱边决定，不自动扩展选边；不自动测量板厚。
-
-限制：R1.3三维圆角，不生成二维激光切割轮廓、切缝补偿或避空狗骨。
-普通内凹Fillet可能增加角落材料，不能保证配合更松；应进行加工试配。
-圆角会修剪邻接面及端部。失败时不降低半径、不接受开放实体。
-目标为Windows Rhino7/8；Rhino8的实际运行时兼容性仍需实测。
-当前环境无C#工具链和Rhino，尚未验证编译及实机运行。
+验收：新建4x10mm槽，检查闭合；在副本上炸开后应有四段R1.3圆弧及四条直线，端部直线1.4mm，长边直线7.4mm。测试旋转矩形转换及Undo。
+编译成功不代表已通过Rhino 7/8实际加载与几何验收；本环境没有Rhino可运行。
