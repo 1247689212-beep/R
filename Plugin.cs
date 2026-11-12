@@ -12,7 +12,23 @@ namespace WoodFilletR13 {
  [Guid("6c8a2114-6163-4444-a879-cb02bd09d32a")]
  public sealed class WoodFilletCommand : Command {
   public override string EnglishName { get { return "WoodFilletR13"; } }
-  static Curve Slot(RhinoDoc doc, Plane p, double w, double h, double r) {
+  static Curve Slot(RhinoDoc doc, Plane p, double w, double h, double r, bool notched) {
+   if(notched) {
+    // End notches: radius r=0.5mm, depth r/2=0.25mm.
+    // Circle centers lie r-depth outside each end of the slot.
+    double d=r/2, a=Math.Sqrt(r*r-(r-d)*(r-d)), m=w/2;
+    double k=r*(1-1/Math.Sqrt(2));
+    var result=new PolyCurve();
+    Action<double,double,double,double> line=(x1,y1,x2,y2)=>result.Append(new LineCurve(p.PointAt(x1,y1),p.PointAt(x2,y2)));
+    Action<double,double,double,double,double,double> arc=(x1,y1,xm,ym,x2,y2)=>result.Append(new ArcCurve(new Arc(p.PointAt(x1,y1),p.PointAt(xm,ym),p.PointAt(x2,y2))));
+    line(r,0,m-a,0); arc(m-a,0,m,d,m+a,0); line(m+a,0,w-r,0);
+    arc(w-r,0,w-k,k,w,r); line(w,r,w,h-r);
+    arc(w,h-r,w-k,h-k,w-r,h);
+    line(w-r,h,m+a,h); arc(m+a,h,m,h-d,m-a,h); line(m-a,h,r,h);
+    arc(r,h,k,h-k,0,h-r); line(0,h-r,0,r); arc(0,r,k,k,r,0);
+    if(result.IsValid && result.IsClosed)return result;
+    result.Dispose();return null;
+   }
    using(var rect = new Rectangle3d(p,w,h).ToNurbsCurve()) {
     var c=Curve.CreateFilletCornersCurve(rect,r,doc.ModelAbsoluteTolerance,doc.ModelAngleToleranceRadians);
     if(c!=null && c.IsValid && c.IsClosed) return c;
@@ -24,17 +40,27 @@ namespace WoodFilletR13 {
    if(doc.ModelUnitSystem==UnitSystem.None || doc.ModelUnitSystem==UnitSystem.CustomUnits) return Result.Failure;
    double s=RhinoMath.UnitScale(UnitSystem.Millimeters,doc.ModelUnitSystem);
    double w=4*s,r=1.3*s,tol=doc.ModelAbsoluteTolerance;
+   bool notched=false;
    if(s<=0 || double.IsNaN(s) || double.IsInfinity(s) || tol<=0 || tol>0.01*s) {
     RhinoApp.WriteLine("请设置标准长度单位，绝对公差不大于0.01mm。"); return Result.Failure;
    }
+   using(var spec=new GetOption()) {
+    spec.SetCommandPrompt("选择板材规格：四毫米或二点五毫米");
+    spec.AddOption(new Rhino.UI.LocalizeStringPair("Four", "四毫米"));
+    int thin=spec.AddOption(new Rhino.UI.LocalizeStringPair("Thin", "二点五毫米"));
+    if(spec.Get()!=GetResult.Option)return spec.CommandResult();
+    notched=spec.OptionIndex()==thin;
+    if(notched){w=2.5*s;r=0.5*s;}
+   }
    using(var opt=new GetOption()) {
-    opt.SetCommandPrompt("二维卡口：New新建，Convert转换矩形");
-    int n=opt.AddOption("New"); opt.AddOption("Convert");
+    opt.SetCommandPrompt("二维卡口：选择操作");
+    int n=opt.AddOption(new Rhino.UI.LocalizeStringPair("New", "新建"));
+    opt.AddOption(new Rhino.UI.LocalizeStringPair("Convert", "转换"));
     if(opt.Get()!=GetResult.Option)return opt.CommandResult();
-    if(opt.OptionIndex()==n) return NewSlot(doc,s,w,r);
+    if(opt.OptionIndex()==n) return NewSlot(doc,s,w,r,notched);
    }
    using(var go=new GetObject()) {
-    go.SetCommandPrompt("选择4mm宽闭合矩形轮廓");
+    go.SetCommandPrompt(string.Format("选择{0}mm宽闭合矩形轮廓",w/s));
     go.GeometryFilter=ObjectType.Curve; go.SubObjectSelect=false;
     go.GetMultiple(1,0); if(go.CommandResult()!=Result.Success)return go.CommandResult();
     int done=0;
@@ -53,7 +79,7 @@ namespace WoodFilletR13 {
      else continue;
      for(int j=0;j<4;j++)if(Math.Abs(p.DistanceTo(poly[j]))>tol)valid=false;
      if(!valid || !p.IsValid)continue;
-     using(var result=Slot(doc,p,w,h,r)) {
+     using(var result=Slot(doc,p,w,h,r,notched)) {
       if(result!=null && doc.Objects.Replace(obj.Id,result))done++;
      }
     }
@@ -61,10 +87,10 @@ namespace WoodFilletR13 {
     return done>0?Result.Success:Result.Nothing;
    }
   }
-  static Result NewSlot(RhinoDoc doc,double s,double w,double r) {
+  static Result NewSlot(RhinoDoc doc,double s,double w,double r,bool notched) {
    double mm=10;
    using(var gn=new GetNumber()) {
-    gn.SetCommandPrompt("卡口总长度（毫米，至少4）");gn.SetDefaultNumber(10);gn.SetLowerLimit(4,false);
+    gn.SetCommandPrompt(string.Format("卡口总长度（毫米，至少{0}）",w/s));gn.SetDefaultNumber(10);gn.SetLowerLimit(w/s,false);
     if(gn.Get()!=GetResult.Number)return gn.CommandResult();mm=gn.Number();
    }
    Point3d center, direction;
@@ -81,13 +107,16 @@ namespace WoodFilletR13 {
    if(y.Length<=doc.ModelAbsoluteTolerance || !y.Unitize())return Result.Failure;
    var x=Vector3d.CrossProduct(y,plane.Normal);x.Unitize();
    double h=mm*s;var origin=center-x*(w/2)-y*(h/2);
-   using(var c=Slot(doc,new Plane(origin,x,y),w,h,r)) {
+   using(var c=Slot(doc,new Plane(origin,x,y),w,h,r,notched)) {
     if(c==null)return Result.Failure;
     var id=doc.Objects.AddCurve(c);if(id==Guid.Empty)return Result.Failure;
     doc.Objects.Select(id);doc.Views.Redraw();
    }
-   RhinoApp.WriteLine("已创建二维闭合卡口：宽4mm，长{0}mm，四角R1.3mm。",mm);
+   RhinoApp.WriteLine("已创建二维闭合卡口：宽{0}mm，长{1}mm，四角R{2}mm。",w/s,mm,r/s);
+   if(notched)RhinoApp.WriteLine("两端内凹圆弧：R0.5mm，深0.25mm，已合并为闭合轮廓。");
    return Result.Success;
   }
  }
 }
+
+
