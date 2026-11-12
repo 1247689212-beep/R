@@ -13,6 +13,18 @@ namespace WoodFilletR13 {
  public sealed class WoodFilletCommand : Command {
   public override string EnglishName { get { return "WoodFilletR13"; } }
   static Curve Slot(RhinoDoc doc, Plane p, double w, double h, double r, bool notched) {
+   if(!notched && Math.Abs(w-2*r)<1e-10*w) {
+    // Exact capsule: avoid coincident fillets and zero-length end lines.
+    if(h<w)h=w;
+    if(h==w)return new Circle(new Plane(p.PointAt(r,r),p.XAxis,p.YAxis),r).ToNurbsCurve();
+    var capsule=new PolyCurve();
+    capsule.Append(new ArcCurve(new Arc(p.PointAt(0,r),p.PointAt(r,0),p.PointAt(w,r))));
+    capsule.Append(new LineCurve(p.PointAt(w,r),p.PointAt(w,h-r)));
+    capsule.Append(new ArcCurve(new Arc(p.PointAt(w,h-r),p.PointAt(r,h),p.PointAt(0,h-r))));
+    capsule.Append(new LineCurve(p.PointAt(0,h-r),p.PointAt(0,r)));
+    if(capsule.IsValid && capsule.IsClosed)return capsule;
+    capsule.Dispose();return null;
+   }
    if(notched) {
     // End notches: radius r=0.5mm, depth r/2=0.25mm.
     // Circle centers lie r-depth outside each end of the slot.
@@ -44,20 +56,27 @@ namespace WoodFilletR13 {
    if(s<=0 || double.IsNaN(s) || double.IsInfinity(s) || tol<=0 || tol>0.01*s) {
     RhinoApp.WriteLine("请设置标准长度单位，绝对公差不大于0.01mm。"); return Result.Failure;
    }
-   using(var spec=new GetOption()) {
-    spec.SetCommandPrompt("选择板材规格：四毫米或二点五毫米");
-    spec.AddOption(new Rhino.UI.LocalizeStringPair("Four", "四毫米"));
-    int thin=spec.AddOption(new Rhino.UI.LocalizeStringPair("Thin", "二点五毫米"));
-    if(spec.Get()!=GetResult.Option)return spec.CommandResult();
-    notched=spec.OptionIndex()==thin;
-    if(notched){w=2.5*s;r=0.5*s;}
+   using(var spec=new GetNumber()) {
+    spec.SetCommandPrompt("输入板厚（mm）：2 / 2.5 / 3 / 4");
+    spec.SetDefaultNumber(4);
+    while(true) {
+     if(spec.Get()!=GetResult.Number)return spec.CommandResult();
+     double thickness=spec.Number();
+     if(thickness!=2 && thickness!=2.5 && thickness!=3 && thickness!=4) {
+      RhinoApp.WriteLine("请输入2、2.5、3或4。");continue;
+     }
+     w=thickness*s;notched=thickness==2.5;
+     r=(notched?0.5:thickness==2?1.0:1.3)*s;break;
+    }
    }
-   using(var opt=new GetOption()) {
-    opt.SetCommandPrompt("二维卡口：选择操作");
-    int n=opt.AddOption(new Rhino.UI.LocalizeStringPair("New", "新建"));
-    opt.AddOption(new Rhino.UI.LocalizeStringPair("Convert", "转换"));
-    if(opt.Get()!=GetResult.Option)return opt.CommandResult();
-    if(opt.OptionIndex()==n) return NewSlot(doc,s,w,r,notched);
+   using(var opt=new GetNumber()) {
+    opt.SetCommandPrompt("输入操作编号：1=新建，2=转换");opt.SetDefaultNumber(1);
+    while(true) {
+     if(opt.Get()!=GetResult.Number)return opt.CommandResult();
+     if(opt.Number()==1)return NewSlot(doc,s,w,r,notched);
+     if(opt.Number()==2)break;
+     RhinoApp.WriteLine("请输入1或2。");
+    }
    }
    using(var go=new GetObject()) {
     go.SetCommandPrompt(string.Format("选择{0}mm宽闭合矩形轮廓",w/s));
