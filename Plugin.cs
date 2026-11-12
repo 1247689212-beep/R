@@ -76,26 +76,15 @@ namespace WoodFilletR13 {
      r=(notched?0.5:thickness==2?1.0:1.3)*s;break;
     }
    }
-   using(var opt=new GetNumber()) {
-    opt.SetCommandPrompt("输入操作编号：1=新建，2=转换");opt.SetDefaultNumber(1);
-    while(true) {
-     if(opt.Get()!=GetResult.Number)return opt.CommandResult();
-     if(opt.Number()==1)return NewSlot(doc,s,w,r,notched);
-     if(opt.Number()==2)break;
-     RhinoApp.WriteLine("请输入1或2。");
-    }
-   }
-   var highlighted=new System.Collections.Generic.List<RhinoObject>();
-   foreach(var item in doc.Objects.GetObjectList(ObjectType.Curve)) {
-    if(IsPending(item,w,tol)){item.Highlight(true);highlighted.Add(item);}
-   }
-   doc.Views.Redraw();
+   var failed=new System.Collections.Generic.HashSet<Guid>();
+   bool completed=false;
    try {
    using(var go=new GetObject()) {
-    go.SetCommandPrompt(string.Format("已提亮{0}个未倒角{1}mm矩形，请选择要转换的轮廓",highlighted.Count,w/s));
+    go.SetCommandPrompt(string.Format("选择要转换的{0}mm矩形轮廓，回车执行",w/s));
     go.GeometryFilter=ObjectType.Curve; go.SubObjectSelect=false;
     go.GetMultiple(1,0); if(go.CommandResult()!=Result.Success)return go.CommandResult();
     int done=0;
+    for(int i=0;i<go.ObjectCount;i++)failed.Add(go.Object(i).ObjectId);
     for(int i=0;i<go.ObjectCount;i++) {
      var obj=go.Object(i).Object(); var c=go.Object(i).Curve();
      Polyline poly;
@@ -113,66 +102,23 @@ namespace WoodFilletR13 {
      if(!valid || !p.IsValid)continue;
      using(var result=Slot(doc,p,w,h,r,notched)) {
       if(result!=null && doc.Objects.Replace(obj.Id,result)) {
-       done++;doc.Objects.Select(obj.Id,false);
+       done++;failed.Remove(obj.Id);
       }
      }
     }
-    doc.Views.Redraw(); RhinoApp.WriteLine("转换完成：{0}；跳过：{1}。支持Undo撤销。",done,go.ObjectCount-done);
-    return done>0?Result.Success:Result.Nothing;
+    completed=true;
+    RhinoApp.WriteLine("转换成功：{0}；未成功：{1}。仅未成功对象高亮，Esc清除，支持Undo。",done,failed.Count);
+    return Result.Success;
    }
    } finally {
-    foreach(var item in highlighted)item.Highlight(false);
-    // Persist remaining candidates as standard Rhino selection; Esc clears it.
-    foreach(var item in doc.Objects.GetObjectList(ObjectType.Curve)) {
-     if(IsPending(item,w,tol))doc.Objects.Select(item.Id);
+    // Apply result selection only after GetObject has been disposed.
+    // Cancel leaves selection handling to Rhino and never scans the document.
+    if(completed) {
+     doc.Objects.UnselectAll();
+     foreach(var id in failed)doc.Objects.Select(id);
+     doc.Views.Redraw();
     }
-    doc.Views.Redraw();
    }
-  }
-  static bool IsPending(RhinoObject obj,double width,double tol) {
-   if(obj==null || obj.IsHidden || obj.IsLocked || obj.IsReference || !obj.IsSelectable())return false;
-   var c=obj.Geometry as Curve;Polyline poly;
-   if(c==null || !c.IsClosed || !c.TryGetPolyline(out poly) || poly.Count!=5)return false;
-   var e=new Vector3d[4];var u=new Vector3d[4];var len=new double[4];
-   for(int i=0;i<4;i++){e[i]=poly[(i+1)%4]-poly[i];len[i]=e[i].Length;u[i]=e[i];if(len[i]<=tol || !u[i].Unitize())return false;}
-   for(int i=0;i<4;i++)if(Math.Abs(u[i]*u[(i+1)%4])>1e-8)return false;
-   if((e[0]+e[2]).Length>tol || (e[1]+e[3]).Length>tol)return false;
-   if(!((Math.Abs(len[0]-width)<=tol && len[1]>=width-tol) || (Math.Abs(len[1]-width)<=tol && len[0]>=width-tol)))return false;
-   var p=new Plane(poly[0],u[0],-u[3]);
-   if(!p.IsValid)return false;
-   for(int i=0;i<4;i++)if(Math.Abs(p.DistanceTo(poly[i]))>tol)return false;
-   return true;
-  }
-  static Result NewSlot(RhinoDoc doc,double s,double w,double r,bool notched) {
-   double mm=10;
-   using(var gn=new GetNumber()) {
-    gn.SetCommandPrompt(string.Format("卡口总长度（毫米，至少{0}）",w/s));gn.SetDefaultNumber(10);gn.SetLowerLimit(w/s,false);
-    if(gn.Get()!=GetResult.Number)return gn.CommandResult();mm=gn.Number();
-   }
-   Point3d center, direction;
-   using(var gp=new GetPoint()) {
-    gp.SetCommandPrompt("卡口中心");if(gp.Get()!=GetResult.Point)return gp.CommandResult();center=gp.Point();
-   }
-   var plane=doc.Views.ActiveView.ActiveViewport.ConstructionPlane();
-   center=plane.ClosestPoint(center);
-   using(var gp=new GetPoint()) {
-    gp.SetCommandPrompt("卡口长度方向");gp.SetBasePoint(center,true);gp.DrawLineFromPoint(center,true);
-    if(gp.Get()!=GetResult.Point)return gp.CommandResult();direction=gp.Point();
-   }
-   var y=plane.ClosestPoint(direction)-center;
-   if(y.Length<=doc.ModelAbsoluteTolerance || !y.Unitize())return Result.Failure;
-   var x=Vector3d.CrossProduct(y,plane.Normal);x.Unitize();
-   double h=mm*s;var origin=center-x*(w/2)-y*(h/2);
-   using(var c=Slot(doc,new Plane(origin,x,y),w,h,r,notched)) {
-    if(c==null)return Result.Failure;
-    var id=doc.Objects.AddCurve(c);if(id==Guid.Empty)return Result.Failure;
-    doc.Objects.Select(id);doc.Views.Redraw();
-   }
-   RhinoApp.WriteLine("已创建二维闭合卡口：宽{0}mm，长{1}mm，四角R{2}mm。",w/s,mm,r/s);
-   if(notched)RhinoApp.WriteLine("两端内凹圆弧：R0.5mm，深0.25mm，已合并为闭合轮廓。");
-   return Result.Success;
   }
  }
 }
-
-
